@@ -1,0 +1,22 @@
+# Binaries
+*.exe
+bin/
+tmp/
+
+# Environment
+.env
+.env.local
+
+# Generated
+docs/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
