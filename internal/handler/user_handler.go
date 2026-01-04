@@ -3,17 +3,23 @@ package handler
 import (
 	"net/http"
 	"strconv"
+	"tasked/internal/auth"
 	"tasked/internal/services"
+	"tasked/internal/utils"
 
 	"github.com/gin-gonic/gin"
 )
 
 type UserHandler struct {
-	service *services.UserService
+	service      *services.UserService
+	tokenManager *auth.TokenManager
 }
 
-func NewUserHandler(service *services.UserService) *UserHandler {
-	return &UserHandler{service: service}
+func NewUserHandler(service *services.UserService, tokenManager *auth.TokenManager) *UserHandler {
+	return &UserHandler{
+		service:      service,
+		tokenManager: tokenManager,
+	}
 }
 
 // CreateUser godoc
@@ -47,10 +53,12 @@ func (h *UserHandler) CreateUser(c *gin.Context) {
 // @Summary Obtener usuario por ID
 // @Description Retorna un usuario específico por su ID
 // @Tags users
+// @Security Bearer
 // @Produce json
 // @Param id path int true "User ID"
 // @Success 200 {object} domain.User
 // @Failure 400 {object} map[string]string
+// @Failure 401 {object} map[string]string
 // @Failure 404 {object} map[string]string
 // @Router /users/{id} [get]
 func (h *UserHandler) GetUser(c *gin.Context) {
@@ -74,12 +82,14 @@ func (h *UserHandler) GetUser(c *gin.Context) {
 // @Summary Actualizar usuario
 // @Description Actualiza los datos de un usuario existente
 // @Tags users
+// @Security Bearer
 // @Accept json
 // @Produce json
 // @Param id path int true "User ID"
 // @Param user body UpdateUserRequest true "Datos a actualizar"
 // @Success 200 {object} domain.User
 // @Failure 400 {object} map[string]string
+// @Failure 401 {object} map[string]string
 // @Failure 500 {object} map[string]string
 // @Router /users/{id} [put]
 func (h *UserHandler) UpdateUser(c *gin.Context) {
@@ -109,9 +119,11 @@ func (h *UserHandler) UpdateUser(c *gin.Context) {
 // @Summary Eliminar usuario
 // @Description Elimina un usuario del sistema
 // @Tags users
+// @Security Bearer
 // @Param id path int true "User ID"
 // @Success 200 {object} map[string]string
 // @Failure 400 {object} map[string]string
+// @Failure 401 {object} map[string]string
 // @Failure 500 {object} map[string]string
 // @Router /users/{id} [delete]
 func (h *UserHandler) DeleteUser(c *gin.Context) {
@@ -130,6 +142,52 @@ func (h *UserHandler) DeleteUser(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "user deleted"})
 }
 
+// Login godoc
+// @Summary Autenticar usuario
+// @Description Autentica un usuario y retorna un JWT token
+// @Tags users
+// @Accept json
+// @Produce json
+// @Param credentials body LoginRequest true "Email y password"
+// @Success 200 {object} LoginResponse
+// @Failure 400 {object} map[string]string
+// @Failure 401 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /login [post]
+func (h *UserHandler) Login(c *gin.Context) {
+	var req LoginRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	user, err := h.service.GetUserByEmail(c.Request.Context(), req.Email)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials"})
+		return
+	}
+
+	if !utils.VerifyPassword(user.Password, req.Password) {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials"})
+		return
+	}
+
+	token, err := h.tokenManager.GenerateToken(user.ID, user.Email, user.Username)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate token"})
+		return
+	}
+
+	c.JSON(http.StatusOK, LoginResponse{
+		Token: token,
+		User: LoginUser{
+			ID:       user.ID,
+			Username: user.Username,
+			Email:    user.Email,
+		},
+	})
+}
+
 type CreateUserRequest struct {
 	Username string `json:"username" binding:"required" example:"john_doe"`
 	Email    string `json:"email" binding:"required,email" example:"john@example.com"`
@@ -139,4 +197,20 @@ type CreateUserRequest struct {
 type UpdateUserRequest struct {
 	Username string `json:"username" binding:"required" example:"john_doe"`
 	Email    string `json:"email" binding:"required,email" example:"john@example.com"`
+}
+
+type LoginRequest struct {
+	Email    string `json:"email" binding:"required,email" example:"john@example.com"`
+	Password string `json:"password" binding:"required" example:"password123"`
+}
+
+type LoginResponse struct {
+	Token string    `json:"token" example:"eyJhbGciOiJIUzI1NiIs..."`
+	User  LoginUser `json:"user"`
+}
+
+type LoginUser struct {
+	ID       int64  `json:"id" example:"1"`
+	Username string `json:"username" example:"john_doe"`
+	Email    string `json:"email" example:"john@example.com"`
 }
